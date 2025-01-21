@@ -1,6 +1,7 @@
 import os
 import utils
 import shutil
+import time
 import logging
 import argparse
 import importlib
@@ -8,6 +9,7 @@ import os.path as osp
 import torch
 import torch.distributed as dist
 from datetime import datetime
+import mmcv
 from mmcv import Config, DictAction
 from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
 from mmcv.runner import EpochBasedRunner, build_optimizer, load_checkpoint
@@ -24,6 +26,9 @@ def main():
     parser.add_argument('--override', nargs='+', action=DictAction)
     parser.add_argument('--local_rank', type=int, default=0)
     parser.add_argument('--world_size', type=int, default=1)
+    parser.add_argument('--work-dir', help='the dir to save logs and models')
+    parser.add_argument(
+        '--resume-from', help='the checkpoint file to resume from')
     args = parser.parse_args()
 
     # parse configs
@@ -55,22 +60,30 @@ def main():
     world_size = int(os.environ['WORLD_SIZE'])
 
     # resume or start a new run
-    if cfgs.resume_from is not None:
+    if args.resume_from is not None:
+        cfgs.resume_from = args.resume_from
         assert os.path.isfile(cfgs.resume_from)
-        work_dir = os.path.dirname(cfgs.resume_from)
-    else:
-        run_name = osp.splitext(osp.split(args.config)[-1])[0]
-        run_name += '_' + datetime.now().strftime("%Y-%m-%d/%H-%M-%S")
-        work_dir = os.path.join('outputs', cfgs.model.type, run_name)
+
+    # work_dir is determined in this priority: CLI > segment in file > filename
+    if args.work_dir is not None:
+        # update configs according to CLI args if args.work_dir is not None
+        work_dir = args.work_dir
+    elif cfgs.get('work_dir', None) is None:
+        work_dir = os.path.join('outputs', osp.splitext(osp.basename(args.config))[0])
+
+    mmcv.mkdir_or_exist(osp.abspath(work_dir))
 
     if local_rank == 0:
-        if os.path.exists(work_dir):  # must be an empty dir
-            raise FileExistsError(work_dir)
-        os.makedirs(work_dir, exist_ok=False)
+        # if os.path.exists(work_dir):  # must be an empty dir
+        #     raise FileExistsError(work_dir)
+        # os.makedirs(work_dir, exist_ok=False)
 
         # init logging, backup code
-        utils.init_logging(os.path.join(work_dir, 'train.log'), cfgs.debug)
-        utils.backup_code(work_dir)
+        timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime())
+        log_file = osp.join(work_dir, f'train_{timestamp}.log')
+
+        utils.init_logging(log_file, cfgs.debug)
+        # utils.backup_code(work_dir)
         logging.info('Logs will be saved to %s' % work_dir)
     else:
         # disable logging on other workers
