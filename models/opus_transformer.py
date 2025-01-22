@@ -28,7 +28,8 @@ class OPUSTransformer(BaseModule):
                  num_refines=[1, 2, 4, 8, 16, 32],
                  scales=[1.0],
                  pc_range=[],
-                 init_cfg=None):
+                 init_cfg=None,
+                 with_cp=True):
         assert init_cfg is None, 'To prevent abnormal initialization ' \
                             'behavior, init_cfg is not allowed to be set'
         super().__init__(init_cfg=init_cfg)
@@ -39,7 +40,8 @@ class OPUSTransformer(BaseModule):
 
         self.decoder = OPUSTransformerDecoder(
             embed_dims, num_frames, num_views, num_points, num_layers, num_levels,
-            num_classes, num_refines, num_groups, scales, pc_range=pc_range)
+            num_classes, num_refines, num_groups, scales, pc_range=pc_range,
+            with_cp=with_cp)
 
     @torch.no_grad()
     def init_weights(self):
@@ -68,7 +70,8 @@ class OPUSTransformerDecoder(BaseModule):
                  num_groups=4,
                  scales=[1.0],
                  pc_range=[],
-                 init_cfg=None):
+                 init_cfg=None,
+                 with_cp=True):
         super().__init__(init_cfg)
         self.num_layers = num_layers
         self.pc_range = pc_range
@@ -91,7 +94,7 @@ class OPUSTransformerDecoder(BaseModule):
                 OPUSTransformerDecoderLayer(
                     embed_dims, num_frames, num_views, num_points, num_levels, num_classes, 
                     num_groups, num_refines[i], last_refines[i], layer_idx=i, 
-                    scale=scales[i], pc_range=pc_range)
+                    scale=scales[i], pc_range=pc_range, with_cp=with_cp)
             )
 
     @torch.no_grad()
@@ -154,7 +157,8 @@ class OPUSTransformerDecoderLayer(BaseModule):
                  layer_idx=0,
                  scale=1.0,
                  pc_range=[],
-                 init_cfg=None):
+                 init_cfg=None,
+                 with_cp=True):
         super().__init__(init_cfg)
 
         self.embed_dims = embed_dims
@@ -176,12 +180,14 @@ class OPUSTransformerDecoderLayer(BaseModule):
         )
 
         self.self_attn = OPUSSelfAttention(
-            embed_dims, num_heads=8, dropout=0.1, pc_range=pc_range)
+            embed_dims, num_heads=8, dropout=0.1, pc_range=pc_range, with_cp=with_cp)
         self.sampling = OPUSSampling(embed_dims, num_frames=num_frames, num_views=num_views,
                                      num_groups=num_groups, num_points=num_points, 
-                                     num_levels=num_levels, pc_range=pc_range)
+                                     num_levels=num_levels, pc_range=pc_range,
+                                     with_cp=with_cp)
         self.mixing = AdaptiveMixing(in_dim=embed_dims, in_points=num_points * num_frames,
-                                     n_groups=num_groups, out_points=32)
+                                     n_groups=num_groups, out_points=32,
+                                     with_cp=with_cp)
         self.ffn = FFN(embed_dims, feedforward_channels=512, ffn_drop=0.1)
 
         self.norm1 = nn.LayerNorm(embed_dims)
@@ -254,9 +260,11 @@ class OPUSSelfAttention(BaseModule):
                  num_heads=8,
                  dropout=0.1,
                  pc_range=[],
-                 init_cfg=None):
+                 init_cfg=None,
+                 with_cp=True):
         super().__init__(init_cfg)
         self.pc_range = pc_range
+        self.with_cp = with_cp
 
         self.attention = MultiheadAttention(embed_dims, num_heads, dropout, batch_first=True)
         self.gen_tau = nn.Linear(embed_dims, num_heads)
@@ -284,7 +292,7 @@ class OPUSSelfAttention(BaseModule):
         return self.attention(query_feat, attn_mask=attn_mask)
 
     def forward(self, query_points, query_feat):
-        if self.training and query_feat.requires_grad:
+        if self.with_cp and self.training and query_feat.requires_grad:
             return cp(self.inner_forward, query_points, query_feat,
                       use_reentrant=False)
         else:
@@ -308,7 +316,8 @@ class OPUSSampling(BaseModule):
                  num_points=8,
                  num_levels=4,
                  pc_range=[],
-                 init_cfg=None):
+                 init_cfg=None,
+                 with_cp=True):
         super().__init__(init_cfg)
 
         self.num_frames = num_frames
@@ -317,6 +326,7 @@ class OPUSSampling(BaseModule):
         self.num_groups = num_groups
         self.num_levels = num_levels
         self.pc_range = pc_range
+        self.with_cp = with_cp
 
         self.sampling_offset = nn.Linear(embed_dims, num_groups * num_points * 3)
         self.scale_weights = nn.Linear(embed_dims, num_groups * num_points * num_levels)
@@ -370,7 +380,7 @@ class OPUSSampling(BaseModule):
         return sampled_feats
 
     def forward(self, query_points, query_feat, mlvl_feats, occ2img, img_metas):
-        if self.training and query_feat.requires_grad:
+        if self.with_cp and self.training and query_feat.requires_grad:
             return cp(self.inner_forward, query_points, query_feat, mlvl_feats,
                       occ2img, img_metas, use_reentrant=False)
         else:
@@ -380,7 +390,8 @@ class OPUSSampling(BaseModule):
 
 class AdaptiveMixing(nn.Module):
     """Adaptive Mixing"""
-    def __init__(self, in_dim, in_points, n_groups=1, query_dim=None, out_dim=None, out_points=None):
+    def __init__(self, in_dim, in_points, n_groups=1, 
+                 query_dim=None, out_dim=None, out_points=None, with_cp=True):
         super().__init__()
 
         out_dim = out_dim if out_dim is not None else in_dim
@@ -393,6 +404,7 @@ class AdaptiveMixing(nn.Module):
         self.n_groups = n_groups
         self.out_dim = out_dim
         self.out_points = out_points
+        self.with_cp = with_cp
 
         self.eff_in_dim = in_dim // n_groups
         self.eff_out_dim = out_dim // n_groups
@@ -442,7 +454,7 @@ class AdaptiveMixing(nn.Module):
         return out
 
     def forward(self, x, query):
-        if self.training and x.requires_grad:
+        if self.with_cp and self.training and x.requires_grad:
             return cp(self.inner_forward, x, query, use_reentrant=False)
         else:
             return self.inner_forward(x, query)
