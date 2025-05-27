@@ -7,6 +7,8 @@ from mmdet3d.datasets.builder import PIPELINES
 from numpy.linalg import inv
 from mmcv.runner import get_dist_info
 from mmdet3d.core.points import BasePoints
+from mmcv.parallel import DataContainer as DC
+from pyquaternion import Quaternion
 
 
 def compose_lidar2img(ego2global_translation_curr,
@@ -600,6 +602,29 @@ class PointsFromLiDARToEgo:
         pts = torch.cat([points.tensor[..., :3], ones], dim=1).transpose(0, 1)
         pts = torch.matmul(lidar2ego, pts).transpose(0, 1)
 
-        points.tensor = torch.cat([pts, points.tensor[..., 3:]], dim=1)
+        points.tensor = torch.cat([pts[..., :3], points.tensor[..., 3:]], dim=1)
         results['points'] = points
         return results
+    
+
+@PIPELINES.register_module()
+class LoadLiDARSegGTFromFile(object):
+    """Load LiDAR point cloud segmentation ground truths from files.
+    Add the key 'lidarseg' to the results dict.
+    """
+
+    def __call__(self, results):
+        lidarseg_path = results['lidarseg']
+        lidarseg = np.fromfile(lidarseg_path, dtype=np.uint8)
+        learning_map = {
+            1: 0, 5: 0, 7: 0, 8: 0, 10: 0, 11: 0, 13: 0, 
+            19: 0, 20: 0, 0: 0, 29: 0, 31: 0, 9: 1, 14: 2, 15: 3, 16: 3,
+            17: 4, 18: 5, 21: 6, 2: 7, 3: 7, 4: 7, 6: 7, 
+            12: 8, 22: 9, 23: 10, 24: 11, 25: 12, 26: 13, 27: 14, 28: 15,
+            30: 16
+        }
+        lidarseg = np.vectorize(learning_map.__getitem__)(lidarseg)
+        # results['lidarseg'] = DC(torch.Tensor(lidarseg).long())
+        results['pts_semantic_mask'] = torch.Tensor(lidarseg).long()
+        return results
+    

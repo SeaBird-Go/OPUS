@@ -313,3 +313,56 @@ class OPUSHead(BaseModule):
             gt_labels.append(voxel_semantics[i][mask])
         
         return gt_points, gt_masks, gt_labels
+
+
+@HEADS.register_module()
+class OPUSPCPredHead(OPUSHead):
+    @force_fp32(apply_to=('preds_dicts'))
+    def loss(self, points, lidarseg, preds_dicts):
+        # voxelsemantics [B, X200, Y200, Z16] unocuupied=17
+        init_points = preds_dicts['init_points']
+        all_cls_scores = preds_dicts['all_cls_scores'] # 6 ,B,2k4,32,17
+        all_refine_pts = preds_dicts['all_refine_pts']
+
+        num_dec_layers = len(all_cls_scores)
+        gt_points_list, gt_labels_list = \
+            points, lidarseg
+        
+        gt_masks_list = [gt_points.new_ones(gt_points.shape[0], dtype=torch.bool) for gt_points in gt_points_list]
+
+        all_gt_points_list = [gt_points_list for _ in range(num_dec_layers)]
+        all_gt_masks_list = [gt_masks_list for _ in range(num_dec_layers)]
+        all_gt_labels_list = [gt_labels_list for _ in range(num_dec_layers)]
+
+        losses_cls, losses_pts = multi_apply(
+            self.loss_single, all_cls_scores, all_refine_pts, 
+            all_gt_points_list, all_gt_masks_list, all_gt_labels_list)
+
+        loss_dict = dict()
+        # loss of init_points
+        if init_points is not None:
+            pseudo_scores = init_points.new_zeros(
+                *init_points.shape[:-1], self.num_classes)
+            _, init_loss_pts = self.loss_single(
+                pseudo_scores, init_points, gt_points_list, 
+                gt_masks_list, gt_labels_list)
+            loss_dict['init_loss_pts'] = init_loss_pts
+
+        # loss from the last decoder layer
+        loss_dict['loss_cls'] = losses_cls[-1]
+        loss_dict['loss_pts'] = losses_pts[-1]
+
+        # loss from other decoder layers
+        num_dec_layer = 0
+        for loss_cls_i, loss_pts_i in zip(losses_cls[:-1], losses_pts[:-1]):
+            loss_dict[f'd{num_dec_layer}.loss_cls'] = loss_cls_i
+            loss_dict[f'd{num_dec_layer}.loss_pts'] = loss_pts_i
+            num_dec_layer += 1
+        return loss_dict
+
+    def get_occ(self, pred_dicts, img_metas, rescale=False):
+        all_cls_scores = pred_dicts['all_cls_scores']
+        all_refine_pts = pred_dicts['all_refine_pts']
+        cls_scores = all_cls_scores[-1].sigmoid()
+        refine_pts = all_refine_pts[-1]
+

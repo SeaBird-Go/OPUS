@@ -91,6 +91,9 @@ class NuScenesOccDataset(NuScenesDataset):
             lidar2ego_rotation=lidar2ego_rotation_mat,
         )
 
+        if "lidarseg" in info:
+            input_dict['lidarseg'] = info['lidarseg']
+
         if self.modality['use_lidar']:
             lidar_sweeps_prev, lidar_sweeps_next = self.collect_lidar_sweeps(index)
             input_dict.update(dict(

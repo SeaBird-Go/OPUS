@@ -280,3 +280,30 @@ class OPUS(MVXTwoStageDetector):
 
         # run occupancy predictor
         return self.simple_test_pts(img_feats, img_metas, rescale=rescale)
+
+
+@DETECTORS.register_module()
+class OPUSPCPred(OPUS):
+    """OPUS with Point Cloud Prediction."""
+
+    def forward_train(self,
+                      points=None,
+                      img_metas=None,
+                      gt_bboxes_3d=None,
+                      gt_labels_3d=None,
+                      gt_labels=None,
+                      gt_bboxes=None,
+                      img=None,
+                      proposals=None,
+                      gt_bboxes_ignore=None,
+                      img_depth=None,
+                      img_mask=None,
+                      pts_semantic_mask=None):
+        """Forward training function."""
+        img_feats = self.extract_feat(img, img_metas)
+
+        outs = self.pts_bbox_head(img_feats, img_metas)
+        loss_inputs = [points, pts_semantic_mask, outs]
+        losses = self.pts_bbox_head.loss(*loss_inputs)
+
+        return losses

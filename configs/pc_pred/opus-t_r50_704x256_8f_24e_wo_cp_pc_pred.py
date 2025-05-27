@@ -2,16 +2,16 @@
 Copyright (c) 2025 by Haiming Zhang. All Rights Reserved.
 
 Author: Haiming Zhang
-Date: 2025-01-21 15:40:34
+Date: 2025-05-27 17:11:18
 Email: haimingzhang@link.cuhk.edu.cn
-Description: Without using checkpoint technique.
+Description: Predict the lidarseg point cloud rather than the occ point cloud.
 '''
 dataset_type = 'NuScenesOccDataset'
 dataset_root = 'data/nuscenes/'
 occ_root = 'data/nuscenes/gts/'
 
 input_modality = dict(
-    use_lidar=False,
+    use_lidar=True,
     use_camera=True,
     use_radar=False,
     use_map=False,
@@ -66,7 +66,7 @@ img_norm_cfg = dict(
     to_rgb=True)
 
 model = dict(
-    type='OPUS',
+    type='OPUSPCPred',
     use_grid_mask=False,
     data_aug=dict(
         img_color_aug=True,  # Move some augmentations to GPU
@@ -76,7 +76,7 @@ model = dict(
     img_backbone=img_backbone,
     img_neck=img_neck,
     pts_bbox_head=dict(
-        type='OPUSHead',
+        type='OPUSPCPredHead',
         num_classes=len(occ_names),
         in_channels=embed_dims,
         num_query=num_query,
@@ -127,12 +127,15 @@ train_pipeline = [
     dict(type='LoadMultiViewImageFromFiles', to_float32=False, color_type='color'),
     dict(type='LoadMultiViewImageFromMultiSweeps', sweeps_num=num_frames - 1),
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True, with_attr_label=False),
-    dict(type='LoadOccFromFile', occ_root=occ_root), 
+    dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=5, use_dim=3), 
+    dict(type='PointsFromLiDARToEgo'),
+    dict(type='LoadLiDARSegGTFromFile'),
+    dict(type='PointsRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectNameFilter', classes=object_names),
     dict(type='RandomTransformImage', ida_aug_conf=ida_aug_conf, training=True),
     dict(type='DefaultFormatBundle3D', class_names=object_names),
-    dict(type='Collect3D', keys=['img', 'voxel_semantics', 'mask_camera'], meta_keys=(
+    dict(type='Collect3D', keys=['img', 'points', 'pts_semantic_mask'], meta_keys=(
         'filename', 'ori_shape', 'img_shape', 'pad_shape', 'lidar2img', 'img_timestamp', 'ego2lidar'))
 ]
 
@@ -158,7 +161,7 @@ data = dict(
     train=dict(
         type=dataset_type,
         data_root=dataset_root,
-        ann_file=dataset_root + 'nuscenes_infos_train_sweep.pkl',
+        ann_file=dataset_root + 'nuscenes_infos_train_sweep_lidarseg.pkl',
         pipeline=train_pipeline,
         classes=object_names,
         modality=input_modality,
@@ -168,7 +171,7 @@ data = dict(
     val=dict(
         type=dataset_type,
         data_root=dataset_root,
-        ann_file=dataset_root + 'nuscenes_infos_val_sweep.pkl',
+        ann_file=dataset_root + 'nuscenes_infos_val_sweep_lidarseg.pkl',
         pipeline=test_pipeline,
         classes=object_names,
         modality=input_modality,
@@ -220,7 +223,7 @@ revise_keys = [('backbone', 'img_backbone')]
 resume_from = None
 
 # checkpointing
-checkpoint_config = dict(interval=1, max_keep_ckpts=1)
+checkpoint_config = dict(interval=1, max_keep_ckpts=3)
 
 # logging
 log_config = dict(
