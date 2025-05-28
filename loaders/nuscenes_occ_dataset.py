@@ -236,3 +236,29 @@ class NuScenesOccDataset(NuScenesDataset):
             save_path=os.path.join(submission_prefix, '{}.npz'.format(sample_token))
             np.savez_compressed(save_path,occ_pred.astype(np.uint8))
         print('\nFinished.')
+
+
+@DATASETS.register_module()
+class NuScenesOccDatasetPCPred(NuScenesOccDataset):
+    def evaluate(self, occ_results, runner=None, show_dir=None, **eval_kwargs):
+        results_dict = {}
+
+        print('\nStarting Evaluation...')
+        save_root = 'data/opus_pc_pred'
+        os.makedirs(save_root, exist_ok=True)
+
+        from tqdm import tqdm
+        for i in tqdm(range(len(occ_results))):
+            result_dict = occ_results[i]
+            info = self.get_data_info(i)
+            token = info['sample_idx']
+            scene_name = info['scene_name']
+
+            pts_filename = info['pts_filename']
+            pc_pred = result_dict['pc_pred']
+
+            pc_pred_file = osp.join(save_root, f'{token}.npy')
+            np.save(pc_pred_file, pc_pred)
+        
+        print('\nFinished saving point cloud predictions.')
+        return results_dict

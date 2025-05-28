@@ -628,3 +628,27 @@ class LoadLiDARSegGTFromFile(object):
         results['pts_semantic_mask'] = torch.Tensor(lidarseg).long()
         return results
     
+
+@PIPELINES.register_module()
+class EgoPointsFilter(object):
+    """Filter points based on the ego vehicle's position and orientation.
+    
+    Args:
+        radius (float): The radius within which points are filtered out.
+    """
+
+    def __init__(self, radius=2.5):
+        self.radius = radius
+
+    def __call__(self, results):
+        points = results['points']
+
+        # Filter out points that are too close to the ego vehicle
+        mask = np.linalg.norm(points.tensor[..., :3], axis=1) >= self.radius
+        points.tensor = points.tensor[mask]
+        results['points'] = points
+
+        pts_semantic_mask = results.get('pts_semantic_mask', None)
+        if pts_semantic_mask is not None:
+            results['pts_semantic_mask'] = pts_semantic_mask[mask]
+        return results

@@ -366,3 +366,26 @@ class OPUSPCPredHead(OPUSHead):
         cls_scores = all_cls_scores[-1].sigmoid()
         refine_pts = all_refine_pts[-1]
 
+        batch_size = refine_pts.shape[0]
+        ctr_dist_thr = self.test_cfg.get('ctr_dist_thr', 3.)
+        score_thr = self.test_cfg.get('score_thr', 0.)
+        
+        result_list = []
+        for i in range(batch_size):
+            refine_pts, cls_scores = refine_pts[i], cls_scores[i]
+            refine_pts = decode_points(refine_pts, self.pc_range)
+
+            # filter weak points by distance and score
+            centers = refine_pts.mean(dim=1, keepdim=True)
+            ctr_dists = torch.norm(refine_pts - centers, dim=-1)
+            mask_dist = ctr_dists < ctr_dist_thr
+            mask_score = (cls_scores > score_thr).any(dim=-1)
+            mask = mask_dist & mask_score
+            refine_pts = refine_pts[mask]
+            cls_scores = cls_scores[mask]
+
+            result_list.append(dict(
+                sem_pred=cls_scores.argmax(dim=-1).detach().cpu().numpy(),
+                pc_pred=refine_pts.detach().cpu().numpy()))
+        return result_list
+

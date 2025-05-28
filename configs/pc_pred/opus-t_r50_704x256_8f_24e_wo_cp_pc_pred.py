@@ -6,7 +6,7 @@ Date: 2025-05-27 17:11:18
 Email: haimingzhang@link.cuhk.edu.cn
 Description: Predict the lidarseg point cloud rather than the occ point cloud.
 '''
-dataset_type = 'NuScenesOccDataset'
+dataset_type = 'NuScenesOccDatasetPCPred'
 dataset_root = 'data/nuscenes/'
 occ_root = 'data/nuscenes/gts/'
 
@@ -128,8 +128,9 @@ train_pipeline = [
     dict(type='LoadMultiViewImageFromMultiSweeps', sweeps_num=num_frames - 1),
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True, with_attr_label=False),
     dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=5, use_dim=3), 
-    dict(type='PointsFromLiDARToEgo'),
     dict(type='LoadLiDARSegGTFromFile'),
+    dict(type='EgoPointsFilter'),
+    dict(type='PointsFromLiDARToEgo'),
     dict(type='PointsRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectNameFilter', classes=object_names),
@@ -167,7 +168,8 @@ data = dict(
         modality=input_modality,
         test_mode=False,
         use_valid_flag=True,
-        box_type_3d='LiDAR'),
+        box_type_3d='LiDAR',
+        load_interval=2),
     val=dict(
         type=dataset_type,
         data_root=dataset_root,
